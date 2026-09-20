@@ -144,12 +144,11 @@ void main() {
       final full = controller.buildCharacterPrompt();
       controller.setLlmContextCompatibility(true);
       final compact = controller.buildCharacterPrompt();
-      expect(compact.length, lessThanOrEqualTo(full.length));
-      // The compatibility mode reserves a 6000-character history budget. The
-      // fixed protocol itself is intentionally kept below that budget; this
-      // ceiling is less brittle than the old 4000-character assertion after
-      // adding the runtime action-capability contract.
-      expect(compact.length, lessThan(6000));
+      // Runtime trimming never rewrites enabled preset entries. The long novel
+      // sample is explicitly disabled in both profiles by the user's choice.
+      expect(full, isNot(contains('冬马和纱，很讨厌天空。')));
+      expect(compact, isNot(contains('冬马和纱，很讨厌天空。')));
+      expect(compact, contains('<Interleaved_thinking>'));
       expect(compact, contains('ryzaSpeechLanguage'));
       expect(compact, contains('[action:none]'));
       final candidates = controller.characterCatalog.encountersFor(

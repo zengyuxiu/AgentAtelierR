@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:googleapis_auth/auth_io.dart' as auth;
 import 'package:http/http.dart' as http;
 
+import 'preset_wire.dart';
 
 class VertexAiException implements Exception {
   const VertexAiException(this.message);
@@ -268,6 +269,7 @@ class VertexAiClient {
     required String model,
     required List<Map<String, dynamic>> messages,
     bool stream = true,
+    bool preserveSystemOrder = false,
     List<Map<String, dynamic>> tools = const [],
     VertexToolExecutor? executeTool,
     Map<String, dynamic> generationConfig = const {},
@@ -275,8 +277,14 @@ class VertexAiClient {
     // Validate destination before obtaining or transmitting credentials.
     final url = VertexAiConfig.endpoint(baseUrl, model, stream: stream);
     final system = <Map<String, dynamic>>[];
+    if (preserveSystemOrder) {
+      system.add({'text': orderedPresetTransportInstruction});
+    }
     final contents = <Map<String, dynamic>>[];
-    for (final message in messages) {
+    for (final original in messages) {
+      final message = preserveSystemOrder
+          ? orderedPresetWireMessage(original)
+          : original;
       final parts = _parts(message['content']);
       if (message['role'] == 'system') {
         system.addAll(parts);

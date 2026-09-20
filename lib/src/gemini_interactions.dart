@@ -107,14 +107,22 @@ extension _GeminiInteractions on OpenAiCompatibleClient {
     bool agent, {
     bool? thinkingEnabled,
     String? reasoningEffort,
+    bool preserveSystemOrder = false,
   }) async* {
     final url = _geminiEndpoint(baseUrl);
-    final system = conversation
-        .where((m) => m['role'] == 'system')
-        .map((m) => m['content'])
-        .join('\n\n');
+    final wireConversation = preserveSystemOrder
+        ? conversation.map(orderedPresetWireMessage).toList()
+        : conversation;
+    final system = preserveSystemOrder
+        ? orderedPresetTransportInstruction
+        : conversation
+              .where((m) => m['role'] == 'system')
+              .map((m) => m['content'])
+              .join('\n\n');
     final input = <Map<String, dynamic>>[
-      for (final message in conversation.where((m) => m['role'] != 'system'))
+      for (final message in wireConversation.where(
+        (m) => m['role'] != 'system',
+      ))
         {
           'type': message['role'] == 'assistant'
               ? 'model_output'

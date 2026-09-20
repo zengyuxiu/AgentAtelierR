@@ -73,6 +73,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/presets/kemini_dramatron_v3_1.json
     - docs/third_party/ryza-ai-revive-LICENSE.txt
     - assets/branding/
     - assets/branding/loading/

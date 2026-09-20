@@ -621,9 +621,9 @@ class SettingsScreenState extends State<SettingsScreen> {
                   ),
                   subtitle: Text(
                     language.text(
-                      '精简扮演规则；仅注入最近对话涉及的当前地图 NPC，强化语言与输出格式。',
-                      'Compact rules, relevant local NPCs only, explicit language constraints.',
-                      'ルールを簡潔にし、会話に関係する現地NPCのみ追加します。',
+                      '精简运行资料与历史，原预设条目保持完整；仅注入当前话题涉及的 NPC。',
+                      'Compact runtime context and history; preserve preset entries and relevant NPCs.',
+                      'プリセットを保ち、実行時の資料・履歴と話題に関係するNPCのみ整理します。',
                     ),
                   ),
                 ),

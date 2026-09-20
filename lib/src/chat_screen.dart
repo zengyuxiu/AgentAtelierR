@@ -2168,7 +2168,8 @@ class _ChatScreenState extends State<ChatScreen> {
           baseUrl: requestBaseUrl,
           apiKey: apiKey,
           model: requestModel,
-          systemPrompt: widget.controller.buildCharacterPrompt(
+          systemPrompt: '',
+          promptPlan: widget.controller.buildCharacterPromptPlan(
             currentInput: text,
             performanceContext: _buildPerformancePromptContext(),
           ),

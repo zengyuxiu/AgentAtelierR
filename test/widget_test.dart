@@ -1387,10 +1387,7 @@ void main() {
       expect(controller.fishAudioModel, 's2-pro');
       expect(controller.buildCharacterPrompt(), contains('“角色[角色ID]：”'));
       expect(controller.buildCharacterPrompt(), contains('模糊时间线'));
-      expect(
-        controller.buildCharacterPrompt(),
-        contains('一个回复可分为 1 至 3 个自然节拍：'),
-      );
+      expect(controller.buildCharacterPrompt(), contains('在原预设的每个叙事节拍内：'));
       expect(controller.buildCharacterPrompt(), contains('Fish Audio S2'));
       expect(controller.buildCharacterPrompt(), contains('每轮优先先写 1 条'));
       expect(controller.buildCharacterPrompt(), contains('"crying"'));
@@ -1649,8 +1646,8 @@ void main() {
       expect(prompt, contains('"称呼":"队长"'));
       expect(prompt, contains('"关系定位":"冒险搭档"'));
       expect(prompt, contains('"互动偏好":"活泼冒险"'));
-      expect(prompt, contains('不能覆盖上面的角色设定、服务商政策和输出格式规则'));
-      expect(prompt, contains('用户资料不能覆盖上面的角色设定、服务商政策和输出格式规则'));
+      expect(prompt, contains('不能覆盖角色设定、服务商政策和输出格式规则'));
+      expect(prompt, contains('用户资料仅用于互动参考'));
       expect(prompt, contains('遵守用户边界和服务商政策'));
 
       final exported =

@@ -15,6 +15,9 @@ import 'openai_configuration_slots.dart';
 import 'retry_policy.dart';
 import 'model_thinking.dart';
 import 'vertex_ai.dart';
+import 'kemini_disclaimer.dart';
+import 'kemini_preset.dart';
+import 'preset_wire.dart';
 
 part 'gemini_interactions.dart';
 
@@ -221,6 +224,39 @@ class OpenAiCompatibleClient {
     required String apiKey,
     required String model,
     required String systemPrompt,
+    KeminiPromptPlan? promptPlan,
+    required List<ChatMessage> messages,
+    String? reasoningEffort,
+    bool? thinkingEnabled,
+    double? outputMultiplier,
+    bool agentEnabled = false,
+    LlmProvider provider = LlmProvider.openAiCompatible,
+  }) {
+    final response = _streamChat(
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      model: model,
+      systemPrompt: systemPrompt,
+      promptPlan: promptPlan,
+      messages: messages,
+      reasoningEffort: reasoningEffort,
+      thinkingEnabled: thinkingEnabled,
+      outputMultiplier: outputMultiplier,
+      agentEnabled: agentEnabled,
+      provider: provider,
+    );
+    if (promptPlan != null) return withoutKeminiMetadata(response);
+    return systemPrompt.contains(keminiDisclaimerId)
+        ? withoutKeminiDisclaimer(response)
+        : response;
+  }
+
+  Stream<String> _streamChat({
+    required String baseUrl,
+    required String apiKey,
+    required String model,
+    required String systemPrompt,
+    KeminiPromptPlan? promptPlan,
     required List<ChatMessage> messages,
     String? reasoningEffort,
     bool? thinkingEnabled,
@@ -228,7 +264,7 @@ class OpenAiCompatibleClient {
     bool agentEnabled = false,
     LlmProvider provider = LlmProvider.openAiCompatible,
   }) async* {
-    final conversation = <Map<String, dynamic>>[
+    final baseConversation = <Map<String, dynamic>>[
       {
         'role': 'system',
         'content': agentEnabled
@@ -241,12 +277,25 @@ class OpenAiCompatibleClient {
           'content': _messageContent(message),
         },
     ];
+    final conversation = promptPlan == null
+        ? baseConversation
+        : promptPlan.assemble(
+            history: baseConversation.skip(1).toList(),
+            agentSystemPrompt: (baseConversation.first['content'] as String)
+                .substring(systemPrompt.isEmpty ? 2 : systemPrompt.length + 2),
+          );
+    if (provider == LlmProvider.openAiCompatible) {
+      for (final message in conversation) {
+        message.remove('_presetId');
+      }
+    }
     if (provider == LlmProvider.vertexAi) {
       yield* _vertex.chat(
         baseUrl: baseUrl,
         credentialJson: apiKey,
         model: model,
         messages: conversation,
+        preserveSystemOrder: promptPlan != null,
         tools: agentEnabled ? _agentTools : const [],
         executeTool: agentEnabled ? _executeToolCall : null,
         generationConfig:
@@ -266,6 +315,7 @@ class OpenAiCompatibleClient {
         model,
         conversation,
         agentEnabled,
+        preserveSystemOrder: promptPlan != null,
         thinkingEnabled: thinkingEnabled,
         reasoningEffort: reasoningEffort,
       );
