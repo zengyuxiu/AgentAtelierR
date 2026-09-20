@@ -49,6 +49,17 @@ Stream<String> request(
   stream: stream,
 );
 
+class StreamingVertexHttp extends http.BaseClient {
+  StreamingVertexHttp(this.handler);
+  final Future<http.StreamedResponse> Function(http.BaseRequest) handler;
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      handler(request);
+}
+
+List<int> sse(Map<String, dynamic> event) =>
+    utf8.encode('data: ${jsonEncode(event)}\n\n');
+
 class MemorySecrets extends SecretStore {
   String saved = '';
   int writes = 0;
@@ -64,6 +75,185 @@ class MemorySecrets extends SecretStore {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test('Agent text arrives before the HTTP response closes', () async {
+    final wire = StreamController<List<int>>();
+    final client = OpenAiCompatibleClient(
+      vertexClient: VertexAiClient(
+        tokenLoader: (_) async => token('token'),
+        client: StreamingVertexHttp((request) async {
+          expect(request.url.path, endsWith(':streamGenerateContent'));
+          expect(request.url.query, 'alt=sse');
+          final body = jsonDecode((request as http.Request).body) as Map;
+          expect(body['tools'], isNotEmpty);
+          return http.StreamedResponse(wire.stream, 200);
+        }),
+      ),
+    );
+    final iterator = StreamIterator(
+      client.streamChat(
+        baseUrl: base,
+        apiKey: 'json',
+        model: 'gemini-2.5-flash',
+        provider: LlmProvider.vertexAi,
+        systemPrompt: 'roleplay',
+        agentEnabled: true,
+        messages: const [ChatMessage(text: 'hi', isUser: true)],
+      ),
+    );
+    addTearDown(iterator.cancel);
+    wire.add(
+      sse(
+        result([
+          {'text': '第一段'},
+        ], finish: null),
+      ),
+    );
+    expect(await iterator.moveNext().timeout(const Duration(seconds: 2)), true);
+    expect(iterator.current, '第一段');
+    // The tail is deliberately unavailable until the first visible delta arrives.
+    wire.add(
+      sse(
+        result([
+          {'text': '第二段'},
+        ]),
+      ),
+    );
+    unawaited(wire.close());
+    expect(await iterator.moveNext(), true);
+    expect(iterator.current, '第二段');
+    expect(await iterator.moveNext(), false);
+  });
+
+  test(
+    'streamed tool round preserves signatures and streams its final answer',
+    () async {
+      var requests = 0;
+      var executions = 0;
+      final toolPart = {
+        'functionCall': {
+          'name': 'lookup',
+          'args': {'query': 'hi'},
+          'id': 'call1',
+        },
+        'thoughtSignature': 'opaque',
+      };
+      final tail = StreamController<List<int>>();
+      final client = VertexAiClient(
+        tokenLoader: (_) async => token('token'),
+        client: StreamingVertexHttp((request) async {
+          expect(request.url.query, 'alt=sse');
+          final body = jsonDecode((request as http.Request).body) as Map;
+          if (++requests == 1) {
+            return http.StreamedResponse(
+              Stream.fromIterable([
+                sse(result([toolPart], finish: null)),
+                sse(result([])),
+              ]),
+              200,
+            );
+          }
+          expect(body['contents'][1]['parts'], [toolPart]);
+          expect(
+            body['contents'][2]['parts'][0]['functionResponse']['id'],
+            'call1',
+          );
+          return http.StreamedResponse(tail.stream, 200);
+        }),
+      );
+      final iterator = StreamIterator(
+        client.chat(
+          baseUrl: base,
+          credentialJson: 'json',
+          model: 'gemini-2.5-flash',
+          messages: messages,
+          tools: [
+            {
+              'function': {
+                'name': 'lookup',
+                'parameters': {'type': 'object'},
+              },
+            },
+          ],
+          executeTool: (_) async {
+            executions++;
+            return 'found';
+          },
+        ),
+      );
+      addTearDown(iterator.cancel);
+      tail.add(
+        sse(
+          result([
+            {'text': '已找到'},
+          ], finish: null),
+        ),
+      );
+      expect(
+        await iterator.moveNext().timeout(const Duration(seconds: 2)),
+        true,
+      );
+      expect(iterator.current, '已找到');
+      expect(executions, 1);
+      tail.add(
+        sse(
+          result([
+            {'text': '结果'},
+          ]),
+        ),
+      );
+      unawaited(tail.close());
+      expect(await iterator.moveNext(), true);
+      expect(iterator.current, '结果');
+      expect(await iterator.moveNext(), false);
+      expect(requests, 2);
+    },
+  );
+
+  test('truncated streamed tool calls do not execute', () async {
+    var executions = 0;
+    final client = VertexAiClient(
+      tokenLoader: (_) async => token('token'),
+      client: StreamingVertexHttp(
+        (_) async => http.StreamedResponse(
+          Stream.value(
+            sse(
+              result([
+                {
+                  'functionCall': {'name': 'lookup', 'args': {}},
+                },
+              ], finish: null),
+            ),
+          ),
+          200,
+        ),
+      ),
+    );
+    await expectLater(
+      client
+          .chat(
+            baseUrl: base,
+            credentialJson: 'json',
+            model: 'gemini-2.5-flash',
+            messages: messages,
+            tools: [
+              {
+                'function': {
+                  'name': 'lookup',
+                  'parameters': {'type': 'object'},
+                },
+              },
+            ],
+            executeTool: (_) async {
+              executions++;
+              return 'found';
+            },
+          )
+          .join(),
+      throwsA(isA<VertexAiException>()),
+    );
+    expect(executions, 0);
+  });
 
   test('service account uses secure provider storage and invalid replacement is rejected', () async {
     FlutterSecureStorage.setMockInitialValues({

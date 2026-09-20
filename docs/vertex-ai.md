@@ -37,7 +37,7 @@ flutter test test/vertex_ai_test.dart test/gemini_interactions_test.dart test/mo
 此命令验证凭据和云端连接，不会代替应用向系统安全存储写入凭据。
 
 聊天、建议回复、长期记忆及资料转换共用服务商路由。普通聊天使用 SSE；
-启用 Agent 工具时逐轮调用 generateContent，最终返回正文，保留模型原始
+角色聊天在启用 Agent 工具后仍逐轮使用 streamGenerateContent SSE，正文分片即时传递；完整接收并校验工具调用后才执行工具，保留模型原始
 `thoughtSignature`。每轮对话最多执行 10 次工具调用，写入类工具顺序执行。
 文本和内嵌附件转成 `contents/parts`，服务端仍会校验模型支持的 MIME 类型及大小。
 Gemini 2.5 使用 thinkingBudget，Gemini 3 使用 thinkingLevel；未知型号不发送思考参数。

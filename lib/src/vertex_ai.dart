@@ -273,11 +273,7 @@ class VertexAiClient {
     Map<String, dynamic> generationConfig = const {},
   }) async* {
     // Validate destination before obtaining or transmitting credentials.
-    final url = VertexAiConfig.endpoint(
-      baseUrl,
-      model,
-      stream: stream && tools.isEmpty,
-    );
+    final url = VertexAiConfig.endpoint(baseUrl, model, stream: stream);
     final system = <Map<String, dynamic>>[];
     final contents = <Map<String, dynamic>>[];
     for (final message in messages) {
@@ -317,27 +313,33 @@ class VertexAiClient {
         };
         final response = await _send(url, credentialJson, body);
         final bytes = response.stream.timeout(const Duration(seconds: 90));
-        if (stream && tools.isEmpty) {
-          var finished = false;
-          var hasText = false;
+        Map<String, dynamic>? candidate;
+        Map? content;
+        if (stream) {
+          final streamedParts = <dynamic>[];
+          String? finishReason;
           await for (final event in _events(bytes)) {
-            final candidate = _candidate(event);
-            finished |= candidate?['finishReason'] != null;
-            for (final text in _texts(candidate?['content'] as Map?)) {
-              hasText |= text.isNotEmpty;
+            final chunk = _candidate(event);
+            if (chunk == null) continue;
+            finishReason = chunk['finishReason'] as String? ?? finishReason;
+            final chunkContent = chunk['content'] as Map?;
+            streamedParts.addAll(chunkContent?['parts'] as List? ?? const []);
+            for (final text in _texts(chunkContent)) {
               yield text;
             }
           }
-          if (!finished || !hasText) {
+          if (finishReason == null) {
             throw const VertexAiException('Vertex AI 响应中断或未返回正文，请重试。');
           }
-          return;
+          content = {'role': 'model', 'parts': streamedParts};
+          candidate = {'content': content, 'finishReason': finishReason};
+        } else {
+          final event = jsonDecode(
+            await utf8.decoder.bind(bytes).join(),
+          ) as Map<String, dynamic>;
+          candidate = _candidate(event);
+          content = candidate?['content'] as Map?;
         }
-        final event = jsonDecode(
-          await utf8.decoder.bind(bytes).join(),
-        ) as Map<String, dynamic>;
-        final candidate = _candidate(event);
-        final content = candidate?['content'] as Map?;
         final parts = content?['parts'] as List? ?? const [];
         final functions = parts
             .where((part) => part['functionCall'] != null)
@@ -347,7 +349,7 @@ class VertexAiClient {
           if (text.isEmpty || candidate?['finishReason'] == null) {
             throw const VertexAiException('Vertex AI 未返回完整正文。');
           }
-          yield text;
+          if (!stream) yield text;
           return;
         }
         if (executeTool == null ||
