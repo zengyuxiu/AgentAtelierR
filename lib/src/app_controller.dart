@@ -21,6 +21,7 @@ import 'settings_slots.dart';
 import 'openai_configuration_slots.dart';
 import 'world_prompt_defaults.dart';
 import 'world_travel_catalog.dart';
+import 'vertex_ai.dart';
 
 enum SceneTime { morning, afternoon, evening, night }
 
@@ -28,12 +29,17 @@ enum CharacterMood { neutral, happy, concerned, excited }
 
 enum ReasoningEffort { minimal, low, medium, high }
 
-enum LlmProvider { openAiCompatible, gemini }
+enum LlmProvider { openAiCompatible, gemini, vertexAi }
 
 extension LlmProviderLabel on LlmProvider {
+  String get missingCredentialMessage => this == LlmProvider.vertexAi
+      ? '请先在设置 → AI 接口 → Vertex AI 中导入服务账号 JSON。'
+      : '请先在设置中填写 $label 的 API Key。';
+
   String get label => switch (this) {
     LlmProvider.openAiCompatible => 'OpenAI 兼容接口',
     LlmProvider.gemini => 'Google Gemini',
+    LlmProvider.vertexAi => 'Vertex AI',
   };
 }
 
@@ -574,6 +580,9 @@ class AppController extends ChangeNotifier {
   String geminiBaseUrl =
       'https://generativelanguage.googleapis.com/v1beta/interactions';
   String geminiModel = 'gemini-3.8-flash';
+  String vertexProjectId = '';
+  String vertexLocation = 'global';
+  String vertexModel = 'gemini-2.5-flash';
   bool openAiAdvancedEnabled = false;
   ReasoningEffort openAiReasoningEffort = ReasoningEffort.medium;
   double openAiOutputMultiplier = 1.0;
@@ -833,6 +842,11 @@ class AppController extends ChangeNotifier {
     }
     geminiBaseUrl = _preferences.getString('gemini_base_url') ?? geminiBaseUrl;
     geminiModel = _preferences.getString('gemini_model') ?? geminiModel;
+    vertexProjectId =
+        _preferences.getString('vertex_project_id') ?? vertexProjectId;
+    vertexLocation =
+        _preferences.getString('vertex_location') ?? vertexLocation;
+    vertexModel = _preferences.getString('vertex_model') ?? vertexModel;
     openAiAdvancedEnabled =
         _preferences.getBool('openai_advanced_enabled') ?? false;
     final reasoningEffortName =
@@ -2022,20 +2036,45 @@ ${longTermMemoryEnabled ? (agentEnabled ? '需要回忆过往事件、约定或�
     _changed();
   }
 
+  void configureVertexAi({
+    required bool enabled,
+    required String projectId,
+    required String location,
+    required String model,
+  }) {
+    final config = VertexAiConfig(
+      projectId: projectId.trim(),
+      location: location.trim(),
+    );
+    VertexAiConfig.endpoint(config.baseUrl, model.trim());
+    vertexProjectId = config.projectId;
+    vertexLocation = config.location;
+    vertexModel = model.trim();
+    aiEnabled = enabled;
+    llmProvider = LlmProvider.vertexAi;
+    _changed();
+  }
+
   String get activeLlmBaseUrl => switch (llmProvider) {
     LlmProvider.openAiCompatible => openAiBaseUrl,
     LlmProvider.gemini => geminiBaseUrl,
+    LlmProvider.vertexAi => VertexAiConfig(
+      projectId: vertexProjectId,
+      location: vertexLocation,
+    ).baseUrl,
   };
 
   String get activeLlmModel => switch (llmProvider) {
     LlmProvider.openAiCompatible => openAiModel,
     LlmProvider.gemini => geminiModel,
+    LlmProvider.vertexAi => vertexModel,
   };
 
   ModelThinking get modelThinking => identifyModelThinking(
     activeLlmModel,
-    baseUrl: activeLlmBaseUrl,
+    baseUrl: llmProvider == LlmProvider.vertexAi ? '' : activeLlmBaseUrl,
     geminiNative: llmProvider == LlmProvider.gemini,
+    vertexNative: llmProvider == LlmProvider.vertexAi,
   );
 
   // Legacy name retained for persisted settings and older callers.
@@ -2367,6 +2406,9 @@ ${longTermMemoryEnabled ? (agentEnabled ? '需要回忆过往事件、约定或�
       'openAiConfigurations': openAiConfigurations.toJson(),
       'geminiBaseUrl': geminiBaseUrl,
       'geminiModel': geminiModel,
+      'vertexProjectId': vertexProjectId,
+      'vertexLocation': vertexLocation,
+      'vertexModel': vertexModel,
       'openAiAdvancedEnabled': openAiAdvancedEnabled,
       'openAiReasoningEffort': openAiReasoningEffort.name,
       'openAiOutputMultiplier': openAiOutputMultiplier,
@@ -2772,6 +2814,10 @@ ${longTermMemoryEnabled ? (agentEnabled ? '需要回忆过往事件、约定或�
     }
     geminiBaseUrl = preferences['geminiBaseUrl'] as String? ?? geminiBaseUrl;
     geminiModel = preferences['geminiModel'] as String? ?? geminiModel;
+    vertexProjectId =
+        preferences['vertexProjectId'] as String? ?? vertexProjectId;
+    vertexLocation = preferences['vertexLocation'] as String? ?? vertexLocation;
+    vertexModel = preferences['vertexModel'] as String? ?? vertexModel;
     openAiAdvancedEnabled =
         preferences['openAiAdvancedEnabled'] as bool? ?? false;
     openAiReasoningEffort = ReasoningEffort.values.firstWhere(
@@ -3627,6 +3673,9 @@ ${longTermMemoryEnabled ? (agentEnabled ? '需要回忆过往事件、约定或�
       ),
       _preferences.setString('gemini_base_url', geminiBaseUrl),
       _preferences.setString('gemini_model', geminiModel),
+      _preferences.setString('vertex_project_id', vertexProjectId),
+      _preferences.setString('vertex_location', vertexLocation),
+      _preferences.setString('vertex_model', vertexModel),
       _preferences.setBool('openai_advanced_enabled', openAiAdvancedEnabled),
       _preferences.setString(
         'openai_reasoning_effort',

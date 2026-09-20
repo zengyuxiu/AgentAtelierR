@@ -2138,7 +2138,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (apiKey.isEmpty) {
       _stopSpeakingAnimation();
       widget.controller.addAssistantMessage(
-        '请先在设置中填写 ${widget.controller.llmProvider.label} 的 API Key。',
+        requestProvider.missingCredentialMessage,
       );
       if (mounted) {
         setState(() {
@@ -2278,11 +2278,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted || generation != _suggestionGeneration) return;
     if (apiKey.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '请先在设置中填写 ${widget.controller.llmProvider.label} 的 API Key。',
-          ),
-        ),
+        SnackBar(content: Text(requestProvider.missingCredentialMessage)),
       );
       return;
     }

@@ -21,6 +21,7 @@ import 'settings_slot_selector.dart';
 import 'openai_settings_dialog.dart';
 import 'legacy_data_converter.dart';
 import 'settings_detail_page.dart';
+import 'vertex_ai_settings.dart';
 
 String _activeTtsModel(AppController controller) =>
     switch (controller.ttsProvider) {
@@ -581,6 +582,31 @@ class SettingsScreenState extends State<SettingsScreen> {
                       ? const Icon(Icons.check_circle_outline)
                       : const Icon(Icons.chevron_right),
                   onTap: () => _showGeminiSettings(context),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.cloud_outlined),
+                  title: const Text('Vertex AI'),
+                  subtitle: Text(
+                    controller.aiEnabled &&
+                            controller.llmProvider == LlmProvider.vertexAi
+                        ? '${controller.vertexModel} · ${controller.vertexLocation}'
+                        : language.text(
+                            '服务账号 JSON 认证',
+                            'Service account JSON',
+                            'サービスアカウントJSON認証',
+                          ),
+                  ),
+                  trailing: Icon(
+                    controller.aiEnabled &&
+                            controller.llmProvider == LlmProvider.vertexAi
+                        ? Icons.check_circle_outline
+                        : Icons.chevron_right,
+                  ),
+                  onTap: () => _openDetailPage<bool>(
+                    context: context,
+                    builder: (_) =>
+                        VertexAiSettingsPage(controller: controller),
+                  ),
                 ),
                 SwitchListTile(
                   value: controller.llmContextCompatibility,

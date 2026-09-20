@@ -14,6 +14,7 @@ import 'runtime_log.dart';
 import 'openai_configuration_slots.dart';
 import 'retry_policy.dart';
 import 'model_thinking.dart';
+import 'vertex_ai.dart';
 
 part 'gemini_interactions.dart';
 
@@ -61,6 +62,14 @@ class SecretStore {
   Future<String> readGeminiKey() async =>
       await _storage.read(key: 'gemini_api_key') ?? '';
 
+  Future<String> readVertexCredentials() async =>
+      await _storage.read(key: 'vertex_service_account_json') ?? '';
+
+  Future<void> writeVertexCredentials(String value) async {
+    if (value.trim().isNotEmpty) VertexServiceAccount.parse(value);
+    await _writeOrDelete('vertex_service_account_json', value);
+  }
+
   Future<String> readFishAudioKey() async =>
       await _storage.read(key: 'fish_audio_api_key') ?? '';
 
@@ -85,6 +94,7 @@ class SecretStore {
       switch (provider) {
         LlmProvider.openAiCompatible => readOpenAiKey(slot: openAiSlot),
         LlmProvider.gemini => readGeminiKey(),
+        LlmProvider.vertexAi => readVertexCredentials(),
       };
 
   Future<void> writeFishAudioKey(String value) =>
@@ -125,8 +135,14 @@ class OpenAiCompatibleClient {
     WebSearchClient? webSearchClient,
     this._agentToolExecutor,
     this.contextToolExecutor,
+    VertexAiClient? vertexClient,
   }) : _client = client ?? http.Client(),
-       _webSearchClient = webSearchClient ?? WebSearchClient(client: client);
+       _webSearchClient = webSearchClient ?? WebSearchClient(client: client),
+       _injectedVertexClient = vertexClient;
+
+  final VertexAiClient? _injectedVertexClient;
+  late final VertexAiClient _vertex =
+      _injectedVertexClient ?? VertexAiClient(client: _client);
 
   final http.Client _client;
   final WebSearchClient _webSearchClient;
@@ -225,6 +241,24 @@ class OpenAiCompatibleClient {
           'content': _messageContent(message),
         },
     ];
+    if (provider == LlmProvider.vertexAi) {
+      yield* _vertex.chat(
+        baseUrl: baseUrl,
+        credentialJson: apiKey,
+        model: model,
+        messages: conversation,
+        tools: agentEnabled ? _agentTools : const [],
+        executeTool: agentEnabled ? _executeToolCall : null,
+        generationConfig:
+            (identifyModelThinking(model, vertexNative: true).requestFields(
+                  enabled: thinkingEnabled,
+                  effort: reasoningEffort,
+                )['generationConfig']
+                as Map<String, dynamic>?) ??
+            const {},
+      );
+      return;
+    }
     if (provider == LlmProvider.gemini) {
       yield* _geminiChat(
         baseUrl,
@@ -904,6 +938,19 @@ class OpenAiCompatibleClient {
     required List<Map<String, String>> messages,
     LlmProvider provider = LlmProvider.openAiCompatible,
   }) async {
+    if (provider == LlmProvider.vertexAi) {
+      return _vertex
+          .chat(
+            baseUrl: baseUrl,
+            credentialJson: apiKey,
+            model: model,
+            messages: messages
+                .map((m) => Map<String, dynamic>.from(m))
+                .toList(),
+            stream: false,
+          )
+          .join();
+    }
     if (provider == LlmProvider.gemini) {
       return _geminiChat(
         baseUrl,

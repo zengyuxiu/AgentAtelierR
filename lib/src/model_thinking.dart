@@ -12,6 +12,8 @@ enum ThinkingWireFormat {
   claudeBudget,
   openRouter,
   geminiInteractions,
+  vertexBudget,
+  vertexLevel,
 }
 
 /// Names describe capabilities; known endpoints override the wire protocol.
@@ -117,6 +119,14 @@ class ModelThinking {
         fields['generation_config'] = {
           'thinking_level': on ? level : minimumEffort,
         };
+      case ThinkingWireFormat.vertexBudget:
+        fields['generationConfig'] = {
+          'thinkingConfig': {'thinkingBudget': on ? -1 : 0},
+        };
+      case ThinkingWireFormat.vertexLevel:
+        fields['generationConfig'] = {
+          'thinkingConfig': {'thinkingLevel': level.toUpperCase()},
+        };
     }
     if (separateReasoning) fields['reasoning_split'] = true;
     return fields;
@@ -127,8 +137,35 @@ ModelThinking identifyModelThinking(
   String model, {
   String baseUrl = '',
   bool geminiNative = false,
+  bool vertexNative = false,
 }) {
   final name = model.trim().toLowerCase().split('/').last;
+  if (vertexNative) {
+    if (name.startsWith('gemini-2.5')) {
+      return ModelThinking(
+        'Gemini 2.5',
+        name.contains('pro')
+            ? ThinkingAvailability.alwaysOn
+            : ThinkingAvailability.switchable,
+        ThinkingWireFormat.vertexBudget,
+      );
+    }
+    if (RegExp(r'^gemini-3(?:[.\-]|$)').hasMatch(name)) {
+      return ModelThinking(
+        'Gemini 3',
+        ThinkingAvailability.alwaysOn,
+        ThinkingWireFormat.vertexLevel,
+        efforts: name.contains('flash')
+            ? const ['minimal', 'low', 'medium', 'high']
+            : const ['low', 'high'],
+      );
+    }
+    return const ModelThinking(
+      'Vertex AI',
+      ThinkingAvailability.unknown,
+      ThinkingWireFormat.none,
+    );
+  }
   final host = Uri.tryParse(baseUrl)?.host.toLowerCase() ?? '';
   final port = Uri.tryParse(baseUrl)?.port;
   bool hostIs(String domain) => host == domain || host.endsWith('.$domain');
