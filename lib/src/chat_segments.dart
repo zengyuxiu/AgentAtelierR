@@ -86,6 +86,8 @@ const _deliveryCues = {
   'pause',
   'short pause',
 };
+Set<String> get speechDeliveryTags => Set.unmodifiable(_deliveryCues);
+Set<String> get speechEmotionTags => Set.unmodifiable(_fishEmotionCues);
 const _fishEmotionCues = {
   'relaxed',
   'happy',
@@ -151,6 +153,24 @@ final RegExp _metadataLine = RegExp(
   r'^\s*(?:<\|[^\r\n|]+\|>|```+|(?:###\s*)?(?:assistant|user|system)\s*:?)\s*$',
   caseSensitive: false,
 );
+
+/// Preserve multiline user narration independently from spoken dialogue.
+({String narration, String speech}) parseUserComposerParts(String text) {
+  final narration = <String>[];
+  final speech = <String>[];
+  var isNarration = false;
+  for (final line in text.replaceAll('\r\n', '\n').split('\n')) {
+    final prefix = RegExp(r'^\s*(旁白|发言)\s*[：:]\s*').firstMatch(line);
+    if (prefix != null) isNarration = prefix.group(1) == '旁白';
+    (isNarration ? narration : speech).add(
+      prefix == null ? line : line.substring(prefix.end),
+    );
+  }
+  return (
+    narration: narration.join('\n').trim(),
+    speech: speech.join('\n').trim(),
+  );
+}
 
 List<ChatSegment> parseAssistantSegments(String response) {
   final segments = <ChatSegment>[];
@@ -577,6 +597,7 @@ String mergeTtsInstructions(String base, TtsEmotionIntensity intensity) {
 
 class CharacterPerformanceCue {
   const CharacterPerformanceCue({
+    this.expressionIntensity = 'normal',
     this.expression,
     this.action,
     this.actions = const [],
@@ -585,6 +606,7 @@ class CharacterPerformanceCue {
   });
 
   final CharacterExpression? expression;
+  final String expressionIntensity;
   final CharacterAction? action;
   final List<CharacterAction> actions;
   final List<String> motionGroupIds;
@@ -596,6 +618,7 @@ class CharacterPerformanceCue {
 
 class RyzaPerformanceSegment {
   const RyzaPerformanceSegment({
+    this.expressionIntensity = 'normal',
     required this.speechText,
     this.expression,
     this.action,
@@ -605,6 +628,7 @@ class RyzaPerformanceSegment {
   });
 
   final String speechText;
+  final String expressionIntensity;
   final String? posture;
   final CharacterExpression? expression;
   final CharacterAction? action;
@@ -620,12 +644,16 @@ List<RyzaPerformanceSegment> performanceSegmentsForAssistantResponse(
   for (final segment in parseAssistantSegments(response)) {
     if (segment.speaker != ChatSpeaker.ryza) continue;
     CharacterExpression? expression;
+    var expressionIntensity = 'normal';
     CharacterAction? action;
     final actions = <CharacterAction>[];
     final motionGroupIds = <String>[];
     final faceMatches = _faceCue.allMatches(segment.text);
     for (final match in faceMatches) {
       expression = characterExpressionFromTag(match.group(1) ?? '');
+      expressionIntensity = characterExpressionIntensityFromTag(
+        match.group(1) ?? '',
+      );
     }
     final actionMatches = _actionCue.allMatches(segment.text);
     for (final match in actionMatches) {
@@ -645,6 +673,7 @@ List<RyzaPerformanceSegment> performanceSegmentsForAssistantResponse(
         speechText: speechText,
         posture: postureCueForAssistantResponse('莱莎：${segment.text}'),
         expression: expression,
+        expressionIntensity: expressionIntensity,
         action: action,
         actions: actions,
         motionGroupIds: motionGroupIds,
@@ -671,6 +700,7 @@ String? postureCueForAssistantResponse(String response) {
 
 CharacterPerformanceCue performanceCueForAssistantResponse(String response) {
   CharacterExpression? expression;
+  var expressionIntensity = 'normal';
   CharacterAction? action;
   final actions = <CharacterAction>[];
   final motionGroupIds = <String>[];
@@ -679,6 +709,9 @@ CharacterPerformanceCue performanceCueForAssistantResponse(String response) {
     if (segment.speaker != ChatSpeaker.ryza) continue;
     for (final match in _faceCue.allMatches(segment.text)) {
       expression = characterExpressionFromTag(match.group(1) ?? '');
+      expressionIntensity = characterExpressionIntensityFromTag(
+        match.group(1) ?? '',
+      );
     }
     for (final match in _actionCue.allMatches(segment.text)) {
       actionCueCount += 1;
@@ -696,6 +729,7 @@ CharacterPerformanceCue performanceCueForAssistantResponse(String response) {
   }
   return CharacterPerformanceCue(
     expression: expression,
+    expressionIntensity: expressionIntensity,
     action: action,
     actions: actions,
     motionGroupIds: motionGroupIds,
@@ -758,5 +792,10 @@ List<int> dialogueDisplayIndices(
   bool translationOnly,
 ) => [
   for (var i = 0; i < segments.length; i++)
-    if (!translationOnly || segments[i].speaker == ChatSpeaker.translation) i,
+    if (!translationOnly ||
+        !segments.any(
+          (segment) => segment.speaker == ChatSpeaker.translation,
+        ) ||
+        segments[i].speaker == ChatSpeaker.translation)
+      i,
 ];

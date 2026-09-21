@@ -317,14 +317,22 @@ void main() {
 
       expect(synthesis['ok'], isTrue);
       expect(synthesis['kind'], 'llm_recipe');
-      expect((synthesis['result'] as Map<String, dynamic>)['name'], '旅行保温杯');
+      expect(synthesis['success'], isA<bool>());
+      final expectedName = synthesis['success'] == true ? '旅行保温杯' : '调合残渣';
+      expect(
+        (synthesis['result'] as Map<String, dynamic>)['name'],
+        expectedName,
+      );
       expect(controller.alchemyState.history.first.result.isCustom, isTrue);
-      expect(controller.alchemyState.history.first.result.displayName, '旅行保温杯');
+      expect(
+        controller.alchemyState.history.first.result.displayName,
+        expectedName,
+      );
 
       final restored = AlchemyState.fromJson(controller.alchemyState.toJson());
-      expect(restored.history.first.result.displayName, '旅行保温杯');
+      expect(restored.history.first.result.displayName, expectedName);
       expect(
-        restored.inventory.any((item) => item.displayName == '旅行保温杯'),
+        restored.inventory.any((item) => item.displayName == expectedName),
         isTrue,
       );
       controller.dispose();

@@ -82,14 +82,14 @@ extension on _SettingsCategory {
       'モデル、推論、コンテキスト、エージェント',
     ),
     _SettingsCategory.roleplay => language.text(
-      '人物设定、世界书、NPC 与长期记忆',
-      'Persona, world book, NPCs and memory',
-      '人物設定、ワールドブック、NPC、記憶',
+      '人物设定、世界书与 NPC',
+      'Persona, world book and NPCs',
+      '人物設定、ワールドブック、NPC',
     ),
     _SettingsCategory.data => language.text(
-      '本地导入导出与聊天记录管理',
-      'Local import, export and chat history',
-      'ローカルデータの読み込み、書き出し、会話履歴',
+      '长期记忆、本地导入导出与聊天记录',
+      'Memory, local import, export and chat history',
+      '長期記憶、データの読み込み・書き出し、会話履歴',
     ),
     _SettingsCategory.about => 'AgentAtelierR · 1.0.0',
   };
@@ -819,7 +819,7 @@ class SettingsScreenState extends State<SettingsScreen> {
               if (_category == _SettingsCategory.roleplay) ...[
                 const Divider(indent: 16, endIndent: 16),
                 _SectionLabel(
-                  language.text('互动与记忆', 'Interaction & memory', '交流と記憶'),
+                  language.text('角色互动', 'Character interaction', 'キャラクター交流'),
                 ),
                 ListTile(
                   leading: const Icon(Icons.forum_outlined),
@@ -872,6 +872,8 @@ class SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
                 ),
+              ],
+              if (_category == _SettingsCategory.data) ...[
                 ListTile(
                   leading: const Icon(Icons.psychology_alt_outlined),
                   title: Text(
@@ -904,17 +906,15 @@ class SettingsScreenState extends State<SettingsScreen> {
                   ),
                   onTap: () => _showLongTermMemorySettings(context),
                 ),
+              ],
+              if (_category == _SettingsCategory.roleplay) ...[
                 ListTile(
                   leading: const Icon(Icons.favorite_border),
                   title: Text(
                     language.text('角色状态', 'Character status', 'キャラクター状態'),
                   ),
                   subtitle: Text(
-                    language.text(
-                      '${controller.characterMood.label} · 关系点数 ${controller.relationshipPoints}',
-                      '${controller.characterMood.label} · Bond ${controller.relationshipPoints}',
-                      '${controller.characterMood.label} · 親密度 ${controller.relationshipPoints}',
-                    ),
+                    '${controller.characterState.summary(language)}\n${controller.characterState.reason}',
                   ),
                 ),
                 const Divider(indent: 16, endIndent: 16),
@@ -933,6 +933,42 @@ class SettingsScreenState extends State<SettingsScreen> {
                         ? '${controller.ttsProvider.label} · ${_activeTtsModel(controller)}'
                         : language.text('未启用', 'Disabled', '無効'),
                   ),
+                ),
+                SwitchListTile(
+                  title: Text(
+                    language.text(
+                      '独立语音演出',
+                      'Independent voice performance',
+                      '独立音声演出',
+                    ),
+                  ),
+                  subtitle: Text(
+                    language.text(
+                      '单独规划语音情绪与停顿，改善上下句衔接。开启后每轮增加一次模型请求，可能增加等待时间和用量。两种模式均保留感情程度和句内演出密度设置。',
+                      'Plan voice emotions and pauses separately for smoother continuity. Adds one model request per turn and may increase latency and usage. Both modes retain emotion intensity and inline cue density settings.',
+                      '音声の感情と間を個別に計画し、台詞のつながりを改善します。有効時は毎ターンモデルへのリクエストが1回増え、待ち時間と使用量が増える場合があります。両モードで感情の強さと文中演出密度の設定を利用できます。',
+                    ),
+                  ),
+                  value: controller.independentSpeechPerformance,
+                  onChanged: controller.setIndependentSpeechPerformance,
+                ),
+                SwitchListTile(
+                  title: Text(
+                    language.text(
+                      '后台语音播放',
+                      'Background voice playback',
+                      'バックグラウンド音声再生',
+                    ),
+                  ),
+                  subtitle: Text(
+                    language.text(
+                      '开启后，进入设置、地图等应用内页面时继续播放 TTS。关闭后，离开聊天页面停止播放。',
+                      'Keep TTS playing on settings, maps and other in-app pages. When off, leaving chat stops playback.',
+                      '設定やマップなどアプリ内の別ページでもTTSを再生します。オフでは会話画面を離れると停止します。',
+                    ),
+                  ),
+                  value: controller.backgroundVoicePlayback,
+                  onChanged: controller.setBackgroundVoicePlayback,
                 ),
                 for (final provider in TtsProvider.values)
                   ListTile(
@@ -1105,6 +1141,7 @@ class SettingsScreenState extends State<SettingsScreen> {
         characterReplyLanguage: controller.characterReplyLanguage,
         translationLanguage: controller.translationLanguage,
         translationOnly: controller.translationOnly,
+        independentTranslation: controller.independentTranslation,
       ),
     );
     if (result == null) return;
@@ -1115,6 +1152,7 @@ class SettingsScreenState extends State<SettingsScreen> {
       translation: result.translationLanguage,
     );
     controller.setTranslationOnly(result.translationOnly);
+    controller.setIndependentTranslation(result.independentTranslation);
   }
 
   Future<void> _confirmClearHistory(BuildContext context) async {
@@ -1544,7 +1582,7 @@ class SettingsScreenState extends State<SettingsScreen> {
                       controller: asmrReferenceId,
                       decoration: const InputDecoration(
                         labelText: 'ASMR 模式 Voice model ID',
-                        helperText: '可选；仅在主页开启 ASMR 模式时使用并校验',
+                        helperText: '留空使用默认 ASMR 音色；仅在开启 ASMR 模式时使用',
                         border: OutlineInputBorder(),
                       ),
                     ),
@@ -1656,7 +1694,10 @@ class SettingsScreenState extends State<SettingsScreen> {
                         final referenceForTest =
                             switch (controller.ttsVoiceMode) {
                               TtsVoiceMode.normal => referenceId.text.trim(),
-                              TtsVoiceMode.asmr => asmrReferenceId.text.trim(),
+                              TtsVoiceMode.asmr =>
+                                AppController.resolveFishAudioAsmrReferenceId(
+                                  asmrReferenceId.text,
+                                ),
                             };
                         if (key.isEmpty || referenceForTest.isEmpty) {
                           setDialogState(
@@ -2656,6 +2697,7 @@ class _ThemeSettingsDialog extends StatelessWidget {
 
 class _LanguageSettingsDraft {
   const _LanguageSettingsDraft({
+    required this.independentTranslation,
     required this.interfaceLanguage,
     required this.narratorLanguage,
     required this.characterReplyLanguage,
@@ -2668,10 +2710,12 @@ class _LanguageSettingsDraft {
   final AppLanguage characterReplyLanguage;
   final TranslationLanguage translationLanguage;
   final bool translationOnly;
+  final bool independentTranslation;
 }
 
 class _LanguageSettingsDialog extends StatefulWidget {
   const _LanguageSettingsDialog({
+    required this.independentTranslation,
     required this.interfaceLanguage,
     required this.narratorLanguage,
     required this.characterReplyLanguage,
@@ -2684,6 +2728,7 @@ class _LanguageSettingsDialog extends StatefulWidget {
   final AppLanguage characterReplyLanguage;
   final TranslationLanguage translationLanguage;
   final bool translationOnly;
+  final bool independentTranslation;
 
   @override
   State<_LanguageSettingsDialog> createState() =>
@@ -2696,6 +2741,7 @@ class _LanguageSettingsDialogState extends State<_LanguageSettingsDialog> {
   late AppLanguage _characterReplyLanguage;
   late TranslationLanguage _translationLanguage;
   late bool _translationOnly;
+  late bool _independentTranslation;
 
   @override
   void initState() {
@@ -2705,6 +2751,7 @@ class _LanguageSettingsDialogState extends State<_LanguageSettingsDialog> {
     _characterReplyLanguage = widget.characterReplyLanguage;
     _translationLanguage = widget.translationLanguage;
     _translationOnly = widget.translationOnly;
+    _independentTranslation = widget.independentTranslation;
   }
 
   @override
@@ -2780,6 +2827,21 @@ class _LanguageSettingsDialogState extends State<_LanguageSettingsDialog> {
                 value: _translationOnly,
                 onChanged: (value) => setState(() => _translationOnly = value),
               ),
+              SwitchListTile(
+                title: Text(
+                  language.text('独立翻译', 'Independent translation', '独立翻訳'),
+                ),
+                subtitle: Text(
+                  language.text(
+                    '开启：回复后单独请求翻译。关闭：由主模型同时输出原文与译文。保存后对新回复生效；选择“不翻译”时均不翻译。',
+                    'On: translate in a separate request. Off: include translation in the main reply. Applies to new replies after saving; None disables both.',
+                    'オン：返信後に個別翻訳。オフ：主モデルが原文と訳文を出力。保存後の返信に適用。「翻訳しない」では両方無効。',
+                  ),
+                ),
+                value: _independentTranslation,
+                onChanged: (value) =>
+                    setState(() => _independentTranslation = value),
+              ),
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
@@ -2811,6 +2873,7 @@ class _LanguageSettingsDialogState extends State<_LanguageSettingsDialog> {
               characterReplyLanguage: _characterReplyLanguage,
               translationLanguage: _translationLanguage,
               translationOnly: _translationOnly,
+              independentTranslation: _independentTranslation,
             ),
           ),
           child: Text(language.text('保存', 'Save', '保存')),
@@ -2952,23 +3015,41 @@ class _LongTermMemoryDialogState extends State<_LongTermMemoryDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          _entries![index]['date']?.toString() ??
-                              language.text(
-                                '时间未记录',
-                                'Date not recorded',
-                                '日時未記録',
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _entries![index]['date']?.toString() ??
+                                    language.text(
+                                      '时间未记录',
+                                      'Date not recorded',
+                                      '日時未記録',
+                                    ),
+                                style: Theme.of(context).textTheme.labelMedium
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
                               ),
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+                            ),
+                            IconButton(
+                              tooltip: language.text(
+                                '删除这条记忆',
+                                'Delete memory',
+                                'この記憶を削除',
                               ),
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () => setState(() {
+                                _entries!.removeAt(index);
+                                _summary.text = jsonEncode(_document);
+                              }),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 8),
                         TextFormField(
-                          key: ValueKey('memory-entry-$index'),
+                          key: ObjectKey(_entries![index]),
                           initialValue: _entries![index]['summary'] as String,
                           minLines: 1,
                           maxLines: null,

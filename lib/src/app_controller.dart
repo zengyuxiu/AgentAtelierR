@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_localization.dart';
 import 'app_theme.dart';
 import 'alchemy_models.dart';
+import 'character_state.dart';
 import 'attachment_thumbnail_store.dart';
 import 'character_catalog.dart';
 import 'character_appearance.dart';
@@ -262,10 +263,12 @@ class ChatMessage {
     required this.text,
     required this.isUser,
     this.attachments = const [],
+    this.translatedText,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
     text: json['text'] as String? ?? '',
+    translatedText: json['translatedText'] as String?,
     isUser: json['isUser'] as bool? ?? false,
     attachments: (json['attachments'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
@@ -274,11 +277,14 @@ class ChatMessage {
   );
 
   final String text;
+  final String? translatedText;
+  String get displayText => translatedText ?? text;
   final bool isUser;
   final List<ChatAttachment> attachments;
 
   Map<String, dynamic> toJson({bool includeAttachmentThumbnails = false}) => {
     'text': text,
+    if (translatedText != null) 'translatedText': translatedText,
     'isUser': isUser,
     if (attachments.isNotEmpty)
       'attachments': attachments
@@ -290,12 +296,17 @@ class ChatMessage {
           .toList(),
   };
 
-  ChatMessage copyWith({String? text, List<ChatAttachment>? attachments}) =>
-      ChatMessage(
-        text: text ?? this.text,
-        isUser: isUser,
-        attachments: attachments ?? this.attachments,
-      );
+  ChatMessage copyWith({
+    String? text,
+    List<ChatAttachment>? attachments,
+    String? translatedText,
+  }) => ChatMessage(
+    text: text ?? this.text,
+    translatedText:
+        translatedText ?? (text == null ? this.translatedText : null),
+    isUser: isUser,
+    attachments: attachments ?? this.attachments,
+  );
 }
 
 class LocalSaveSlot {
@@ -345,6 +356,7 @@ class CharacterPerformancePromptContext {
     required this.resourcesReady,
     required Map<String, String> playableActionDescriptions,
     Map<String, String> playableMotionGroupDescriptions = const {},
+    this.expressionIntensities = const {},
     this.availablePostures = const {},
     this.postureManuallySelected = false,
   }) : playableActionDescriptions = Map<String, String>.unmodifiable(
@@ -432,6 +444,7 @@ class CharacterPerformancePromptContext {
   final bool resourcesReady;
   final Map<String, String> playableActionDescriptions;
   final Map<String, String> playableMotionGroupDescriptions;
+  final Map<String, List<String>> expressionIntensities;
   final Map<String, String> availablePostures;
   final bool postureManuallySelected;
 
@@ -535,6 +548,19 @@ class AppController extends ChangeNotifier {
   int _dataRevision = 0;
 
   int get dataRevision => _dataRevision;
+  CharacterState characterState = CharacterState();
+  bool settleCharacterState(
+    String turn,
+    Map<String, dynamic> proposal,
+    int expectedRevision,
+  ) {
+    if (expectedRevision != dataRevision) return false;
+    final next = characterState.apply(turn, proposal);
+    if (identical(next, characterState)) return false;
+    characterState = next;
+    _changed();
+    return true;
+  }
 
   List<ChatMessage> messages = [_initialMessage];
   SceneTime sceneTime = sceneTimeForNow();
@@ -684,11 +710,36 @@ class AppController extends ChangeNotifier {
   NpcInteractionFrequency npcInteractionFrequency =
       NpcInteractionFrequency.normal;
   bool fishTtsEnabled = false;
+  bool independentSpeechPerformance = true;
+  bool backgroundVoicePlayback = true;
+
+  void setBackgroundVoicePlayback(bool value) {
+    backgroundVoicePlayback = value;
+    _changed();
+  }
+
+  void setIndependentSpeechPerformance(bool value) {
+    if (independentSpeechPerformance == value) return;
+    independentSpeechPerformance = value;
+    _changed();
+  }
+
   TtsProvider ttsProvider = TtsProvider.fishAudio;
   String fishAudioModel = 's2-pro';
   String fishAudioBaseUrl = 'https://api.fish.audio/v1/tts';
   String fishAudioReferenceId = '';
-  String fishAudioAsmrReferenceId = '';
+  static const defaultFishAudioAsmrReferenceId =
+      'c5de0b3f9ac54e08b21fb63120e4ebdb';
+
+  static String resolveFishAudioAsmrReferenceId(String value) =>
+      value.trim().isEmpty ? defaultFishAudioAsmrReferenceId : value.trim();
+
+  String _fishAudioAsmrReferenceId = defaultFishAudioAsmrReferenceId;
+  String get fishAudioAsmrReferenceId => _fishAudioAsmrReferenceId;
+  set fishAudioAsmrReferenceId(String value) {
+    _fishAudioAsmrReferenceId = resolveFishAudioAsmrReferenceId(value);
+  }
+
   String fishAudioFormat = 'mp3';
   String fishAudioLatency = 'normal';
   double fishAudioSpeed = 1.0;
@@ -708,6 +759,13 @@ class AppController extends ChangeNotifier {
 
   // Kept as a compatibility view for older callers and local backups.
   bool get asmrModeEnabled => ttsVoiceMode != TtsVoiceMode.normal;
+  bool splitNarrationComposer = false;
+  void setSplitNarrationComposer(bool value) {
+    if (splitNarrationComposer == value) return;
+    splitNarrationComposer = value;
+    _changed();
+  }
+
   TtsEmotionIntensity ttsEmotionIntensity = TtsEmotionIntensity.natural;
   TtsCueDensity ttsCueDensity = TtsCueDensity.normal;
   String ttsPreviewText = '你好！今天也一起去寻找有趣的炼金素材吧！';
@@ -738,6 +796,7 @@ class AppController extends ChangeNotifier {
   AppAccentTheme accentTheme = AppAccentTheme.jade;
   AppAccentTheme? textColorTheme;
   bool translationOnly = false;
+  bool independentTranslation = true;
   AppLanguage interfaceLanguage = AppLanguage.chinese;
   AppLanguage narratorLanguage = AppLanguage.chinese;
   AppLanguage characterReplyLanguage = AppLanguage.chinese;
@@ -878,6 +937,10 @@ class AppController extends ChangeNotifier {
       orElse: () => NpcInteractionFrequency.normal,
     );
     fishTtsEnabled = _preferences.getBool('fish_tts_enabled') ?? false;
+    backgroundVoicePlayback =
+        _preferences.getBool('background_voice_playback') ?? true;
+    independentSpeechPerformance =
+        _preferences.getBool('independent_speech_performance') ?? true;
     ttsProvider = TtsProvider.values.firstWhere(
       (value) => value.name == _preferences.getString('tts_provider'),
       orElse: () => TtsProvider.fishAudio,
@@ -951,6 +1014,15 @@ class AppController extends ChangeNotifier {
     longTermMemoryEnabled =
         _preferences.getBool('long_term_memory_enabled') ?? true;
     memorySummary = _preferences.getString('memory_summary') ?? '';
+    splitNarrationComposer =
+        _preferences.getBool('split_narration_composer') ?? false;
+    try {
+      characterState = CharacterState.fromJson(
+        jsonDecode(_preferences.getString('character_state_v1') ?? '{}'),
+      );
+    } on FormatException {
+      characterState = CharacterState();
+    }
     suggestionUseTimes =
         (_preferences.getStringList('suggestion_use_times') ?? const [])
             .map(DateTime.tryParse)
@@ -999,6 +1071,8 @@ class AppController extends ChangeNotifier {
       orElse: () => AppFrameRateMode.adaptive,
     );
     translationOnly = _preferences.getBool('translation_only') ?? false;
+    independentTranslation =
+        _preferences.getBool('independent_translation') ?? true;
     preferCustomUserProfile =
         _preferences.getBool('prefer_custom_user_profile') ?? false;
     textColorTheme = AppAccentTheme.values
@@ -1048,7 +1122,10 @@ class AppController extends ChangeNotifier {
     sceneChangeCount = _preferences.getInt('scene_change_count') ?? 0;
     gatherCount = _preferences.getInt('gather_count') ?? 0;
     synthesisCount =
-        _preferences.getInt('synthesis_count') ?? alchemyState.history.length;
+        _preferences.getInt('synthesis_count') ??
+        alchemyState.history
+            .where((entry) => entry.recipeId != 'custom_failed')
+            .length;
     storyQuestIndex = (_preferences.getInt('story_quest_index') ?? 0).clamp(
       0,
       builtInStoryQuests.length,
@@ -1110,6 +1187,14 @@ class AppController extends ChangeNotifier {
     messages.add(ChatMessage(text: text, isUser: false));
     if (messages.length > 60) messages.removeRange(0, messages.length - 60);
     _changed();
+  }
+
+  bool attachTranslation(ChatMessage original, String translated) {
+    final index = messages.indexOf(original);
+    if (index < 0 || original.isUser) return false;
+    messages[index] = original.copyWith(translatedText: translated);
+    _changed();
+    return true;
   }
 
   ChatMessage? undoLastUserTurn() {
@@ -1210,6 +1295,8 @@ class AppController extends ChangeNotifier {
           '确定采集时，先根据当前地点和对话判断本次发现的 1 至 3 种合理素材，再随 gather_current_location 的 discoveries 提交；'
           '素材不受内置清单限制，但数量与品质由本地系统决定。准备调合时先调用 inspect_alchemy_inventory，'
           '再由莱莎从返回的真实实例 ID 中选材并调用 synthesize_custom_item。'
+          '合成成功率由本地按素材品质与调和剂计算（60%至95%），失败也消耗投入素材，仅得到残渣；必须根据工具的 success 字段叙述，失败不得自动重试。'
+          '用户要求实际使用、吃掉或赠送物品时调用 consume_inventory_item 扣除，合成材料由合成工具自动扣除，不要重复扣料。只拿起查看不消耗。'
           '采集物和成品的名称、描述、分类与调合结果叙述必须使用当前界面语言 ${interfaceLanguage.promptLabel}；'
           '不要跟随莱莎回复语言或历史消息的语言。'
           '应用没有固定配方清单；每次都要根据用户需求、当前场景和素材性质自行决定成品名称、用途、分类、效果与选材。'
@@ -1230,14 +1317,17 @@ class AppController extends ChangeNotifier {
   String buildCharacterPrompt({
     String currentInput = '',
     CharacterPerformancePromptContext? performanceContext,
+    bool independentPerformance = false,
   }) => buildCharacterPromptPlan(
     currentInput: currentInput,
     performanceContext: performanceContext,
+    independentPerformance: independentPerformance,
   ).preview;
 
   KeminiPromptPlan buildCharacterPromptPlan({
     String currentInput = '',
     CharacterPerformancePromptContext? performanceContext,
+    bool independentPerformance = false,
   }) {
     final memory = memoryPromptForCurrentConversation(
       currentInput: currentInput,
@@ -1246,6 +1336,9 @@ class AppController extends ChangeNotifier {
     final currentDate = _dateOnly(now);
     final alchemyPrompt = _alchemyPromptFor(currentInput);
     final userProfile = jsonEncode({
+      '莱莎当前状态': characterState.summary(interfaceLanguage),
+      '短期情绪': characterState.emotion,
+      '状态变化原因': characterState.reason,
       '称呼': userAddress,
       '自画像': userPortrait.trim().isEmpty ? '未设置' : userPortrait.trim(),
       '关系定位': !preferCustomUserProfile || userRelationshipCustom.trim().isEmpty
@@ -1258,14 +1351,18 @@ class AppController extends ChangeNotifier {
           ? '未设置'
           : userInteractionBoundaries.trim(),
     });
-    final translationRule = translationLanguage == TranslationLanguage.none
-        ? '不要输出译文行。'
-        : '每条“莱莎：”或“角色[角色ID]：”台词后都紧跟一条“译文：”，只将紧邻的上一条角色台词翻译为'
-              '${translationLanguage.promptLabel}；不得遗漏其他角色的译文，译文不得添加信息、标签或旁白。';
+    final inlineTranslation =
+        !independentTranslation &&
+        translationLanguage != TranslationLanguage.none;
+    final translationRule = inlineTranslation
+        ? '每条莱莎及其他角色台词之后紧跟一行“译文：”，使用${translationLanguage.promptLabel}忠实翻译该台词；保留原文，不翻译表演标签，不将旁白当作台词。'
+        : '不要输出译文行。${independentTranslation ? '翻译由应用的独立翻译模块完成。' : ''}只输出原文台词、旁白和表演标签。';
     final languageContract = jsonEncode({
       'narratorBodyLanguage': narratorLanguage.promptLabel,
       'ryzaSpeechLanguage': characterReplyLanguage.promptLabel,
-      'translationLanguage': translationLanguage.promptLabel ?? 'DISABLED',
+      'translationLanguage': inlineTranslation
+          ? translationLanguage.promptLabel
+          : 'DISABLED',
     });
     final appearance = characterAppearanceById(selectedCharacterAppearanceId);
     final candidates = characterCatalog.encountersFor(selectedStageId);
@@ -1281,6 +1378,27 @@ class AppController extends ChangeNotifier {
               6000,
             ),
           );
+    final independentPerformanceProtocol = independentPerformance
+        ? '''【独立表演台本适配】
+保留原预设的条目顺序、文风、人物塑造、剧情长度和交错输出结构。以下格式限制仅作用于正文；外围元数据保持原用途，不进入台词或语音。
+你扮演莱莎，自然回应用户，不代替用户行动，不编造未知事实。
+每个非空行以“旁白：”“莱莎：”“角色[角色ID]：”${inlineTranslation ? '或“译文：”' : ''}开头。优先写一条简短旁白，随后角色台词。不要输出face/action/posture控制标签或资源编号，表演由独立模块处理。$translationRule
+角色台词使用 ${characterReplyLanguage.promptLabel}，旁白使用 ${narratorLanguage.promptLabel}，不随历史或用户输入语言改变。
+当前姿态：${performanceContext?.posture ?? '未知'}。动作描述保持合理，不承诺复杂或不可能的身体动作。
+${characterPersonaInjectionEnabled ? _promptDataBlock('persona', characterPersona.isEmpty ? compactCharacterPersona : _boundedPromptText(characterPersona, llmContextCompatibility ? 900 : 4000)) : '人物设定注入已关闭。'}
+${worldSettingInjectionEnabled ? _promptDataBlock('world', _boundedPromptText(editableWorldSetting, llmContextCompatibility ? 700 : 4000)) : '世界书注入已关闭。'}
+用户资料：$userProfile
+服装：${appearance.label}。${appearance.promptDescription}
+本地日期：$currentDate；位置：$selectedAreaName / $selectedStageId / $selectedStageName。
+${_storyQuestPrompt()}
+$alchemyPrompt
+$npc
+${candidates.isNotEmpty ? npcInteractionFrequency.promptInstruction : ''}
+${longTermMemoryEnabled ? (agentEnabled ? '需要回忆时调用 search_memory，不编造未返回的记忆。' : _promptDataBlock('memory', memory)) : ''}
+${asmrModeEnabled ? '当前是ASMR轻声交谈，语气亲近、柔和。' : ''}
+${independentSpeechPerformance || !fishTtsEnabled ? '只输出台词和旁白正文，不输出任何语音情绪、停顿、表情或动作标签；语音演出和肢体表演由独立模块处理。' : '传统语音演出模式：仅为莱莎台词添加与语义一致的情绪标签（如[happy]、[sad]、[relaxed]）及必要的句内[emphasis]、[short pause]；上下句情绪自然衔接。${ttsEmotionIntensity.voiceInstruction} ${ttsCueDensity.promptInstruction} ${ttsEmotionIntensity == TtsEmotionIntensity.off ? "不要添加情绪标签。" : ""} ${asmrModeEnabled ? "优先使用[breathy]、[whispering]、[soft breathy voice]表达轻声气声。" : ""} 旁白和NPC不带语音标签，不输出face/action/posture标签，肢体表演仍由独立模块处理。'}
+不输出分析过程。遵守服务商政策。'''
+        : null;
     // A stale appearance snapshot must not advertise actions for a new model.
     // Posture/revision freshness is owned by the caller and playback queue.
     final Map<String, Object?> performanceData;
@@ -1345,6 +1463,8 @@ class AppController extends ChangeNotifier {
 将原文风要求的引号对白替换为台本前缀；不重复输出引号版正文。人物内心描写使用“旁白：”，实际说出口的话才使用角色前缀。
 【台本输出契约】
 正文每个非空行只能以“旁白：”“莱莎：”“角色[角色ID]：”或“译文：”开头，不用 Markdown、引号或分析说明。
+旁白可以出现多条，并按回复中的顺序显示：对话前的环境、登场或动作铺垫放在台词前；台词后的反应、收尾动作或气氛变化放在台词后。下方旁白保持简短，不复述台词。
+
 每条莱莎台词的正文前必须且只能有一组头部：［主情绪］［face:表情］［action:动作］。使用英文标签、半角方括号和半角冒号；正文开始后不补发或改写标签。动作可以是语义标签，也可以是本轮能力目录中的精确 `grp_*` 组标签；不能使用目录外的组名。
 face 只允许：${jsonEncode(CharacterPerformancePromptContext.faceDescriptions)}。
 主情绪使用 Fish Audio 支持的简短情绪词（如 calm、relaxed、happy、curious、excited、confident、surprised、worried、empathetic、angry、confused、embarrassed、sad、encouraging、friendly、sarcastic），与语义和前后句连续；不要把语音词当成 face。
@@ -1391,7 +1511,8 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
 ''';
     return KeminiPromptPlan(
       preset: keminiPreset,
-      performanceProtocol: performanceProtocol,
+      performanceProtocol:
+          independentPerformanceProtocol ?? performanceProtocol,
       userName: userAddress,
       markers: {
         'worldInfoBefore': worldSettingInjectionEnabled
@@ -1452,6 +1573,24 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
     }
     if (name == 'synthesize_custom_item') {
       return _synthesizeToolResult(args);
+    }
+    if (name == 'consume_inventory_item') {
+      try {
+        final id = args['instance_id'];
+        final quantity = args['quantity'];
+        if (id is! String || quantity is! int) {
+          throw const FormatException('物品 ID 和整数数量必填');
+        }
+        consumeAlchemyItem(id, quantity: quantity);
+        return jsonEncode({
+          'ok': true,
+          'consumed': quantity,
+          'instance_id': id,
+          'message': '物品已消耗。仅叙述本次用途，不得虚构应用尚未实现的属性变化。',
+        });
+      } on Object catch (error) {
+        return jsonEncode({'ok': false, 'message': error.toString()});
+      }
     }
     final query = (args['query'] as String? ?? '').trim();
     if (query.isEmpty || query.length > 300) {
@@ -2354,6 +2493,7 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
         )
         .toList(),
     'memorySummary': memorySummary,
+    'characterState': characterState.toJson(),
     'settingsSlots': _settingsSlotsJson,
     'userProfile': {
       'address': userAddress,
@@ -2383,6 +2523,7 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
     'accentTheme': accentTheme.name,
     'textColorTheme': textColorTheme?.name,
     'translationOnly': translationOnly,
+    'independentTranslation': independentTranslation,
     'preferCustomUserProfile': preferCustomUserProfile,
     'interfaceLanguage': interfaceLanguage.name,
     'narratorLanguage': narratorLanguage.name,
@@ -2430,6 +2571,8 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
       'llmContextCompatibility': llmContextCompatibility,
       'npcInteractionFrequency': npcInteractionFrequency.name,
       'fishTtsEnabled': fishTtsEnabled,
+      'independentSpeechPerformance': independentSpeechPerformance,
+      'backgroundVoicePlayback': backgroundVoicePlayback,
       'ttsProvider': ttsProvider.name,
       'fishAudioModel': fishAudioModel,
       'fishAudioBaseUrl': fishAudioBaseUrl,
@@ -2464,6 +2607,7 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
     'version': 1,
     'messages': messages.map((message) => message.toJson()).toList(),
     'memorySummary': memorySummary,
+    'characterState': characterState.toJson(),
     'characterMood': characterMood.name,
     'relationshipPoints': relationshipPoints,
     'sceneTime': sceneTime.name,
@@ -2632,6 +2776,9 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
           : importedMessages.sublist(importedMessages.length - 60);
     }
     memorySummary = data['memorySummary'] as String? ?? memorySummary;
+    if (data.containsKey('characterState')) {
+      characterState = CharacterState.fromJson(data['characterState']);
+    }
     characterMood = CharacterMood.values.firstWhere(
       (mood) => mood.name == data['characterMood'],
       orElse: () => characterMood,
@@ -2678,9 +2825,15 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
     }
     if (data['alchemy'] case final Map<dynamic, dynamic> alchemy) {
       alchemyState = AlchemyState.fromJson(Map<String, dynamic>.from(alchemy));
+    } else if (data['alchemy'] == null) {
+      alchemyState = AlchemyState.empty();
+    } else {
+      throw const FormatException('存档中的背包数据无效');
     }
     if (!progress.containsKey('synthesisCount')) {
-      synthesisCount = alchemyState.history.length;
+      synthesisCount = alchemyState.history
+          .where((entry) => entry.recipeId != 'custom_failed')
+          .length;
     }
     dynamicQuests = _parseDynamicQuests(data['dynamicQuests']);
   }
@@ -2707,6 +2860,7 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
           : importedMessages.sublist(importedMessages.length - 60);
     }
     memorySummary = data['memorySummary'] as String? ?? '';
+    characterState = CharacterState.fromJson(data['characterState']);
     final userProfile = data['userProfile'] as Map<String, dynamic>? ?? {};
     userAddress = userProfile['address'] as String? ?? '伙伴';
     userPortrait = userProfile['portrait'] as String? ?? '';
@@ -2754,6 +2908,7 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
       orElse: () => AppThemePreference.system,
     );
     translationOnly = data['translationOnly'] == true;
+    independentTranslation = data['independentTranslation'] != false;
     textColorTheme = AppAccentTheme.values
         .where((value) => value.name == data['textColorTheme'])
         .firstOrNull;
@@ -2808,9 +2963,15 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
         .toSet();
     if (data['alchemy'] case final Map<dynamic, dynamic> alchemy) {
       alchemyState = AlchemyState.fromJson(Map<String, dynamic>.from(alchemy));
+    } else if (data['alchemy'] == null) {
+      alchemyState = AlchemyState.empty();
+    } else {
+      throw const FormatException('存档中的背包数据无效');
     }
     if (!progress.containsKey('synthesisCount')) {
-      synthesisCount = alchemyState.history.length;
+      synthesisCount = alchemyState.history
+          .where((entry) => entry.recipeId != 'custom_failed')
+          .length;
     }
     dynamicQuests = _parseDynamicQuests(data['dynamicQuests']);
     final preferences = data['preferences'] as Map<String, dynamic>? ?? {};
@@ -2853,6 +3014,10 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
       orElse: () => NpcInteractionFrequency.normal,
     );
     fishTtsEnabled = preferences['fishTtsEnabled'] as bool? ?? false;
+    independentSpeechPerformance =
+        preferences['independentSpeechPerformance'] as bool? ?? true;
+    backgroundVoicePlayback =
+        preferences['backgroundVoicePlayback'] as bool? ?? true;
     ttsProvider = TtsProvider.values.firstWhere(
       (value) => value.name == preferences['ttsProvider'],
       orElse: () => TtsProvider.fishAudio,
@@ -3030,7 +3195,26 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
       ].take(50).toList(growable: false),
       gatherAvailableAtByStage: alchemyState.gatherAvailableAtByStage,
     );
-    synthesisCount += 1;
+    if (recipeId != 'custom_failed') synthesisCount += 1;
+    _changed();
+  }
+
+  void consumeAlchemyItem(String instanceId, {int quantity = 1}) {
+    final item = _findAlchemyItem(instanceId);
+    if (quantity < 1 || quantity > item.quantity) {
+      throw const FormatException('消耗数量必须大于零且不超过库存');
+    }
+    alchemyState = AlchemyState(
+      inventory: [
+        for (final current in alchemyState.inventory)
+          if (current.instanceId != instanceId)
+            current
+          else if (current.quantity > quantity)
+            current.copyWith(quantity: current.quantity - quantity),
+      ],
+      history: alchemyState.history,
+      gatherAvailableAtByStage: alchemyState.gatherAvailableAtByStage,
+    );
     _changed();
   }
 
@@ -3066,17 +3250,42 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
         .toList(growable: false);
     final catalyst = catalystId == null ? null : _findAlchemyItem(catalystId);
     final requiredCounts = _requiredAlchemyCounts(ingredients, catalyst);
-    final result = const AlchemyEngine().synthesizeCustom(
+    final rng = random ?? Random.secure();
+    final crafted = const AlchemyEngine().synthesizeCustom(
       name: normalizedName,
       description: normalizedDescription,
       category: normalizedCategory,
       ingredients: ingredients,
       catalyst: catalyst,
-      random: random,
+      random: rng,
     );
+    final success =
+        rng.nextDouble() <
+        const AlchemyEngine().successChance(ingredients, catalyst: catalyst);
+    final result = success
+        ? crafted
+        : AlchemyItem(
+            instanceId: crafted.instanceId,
+            templateId: 'custom_failed_product',
+            quality: 0,
+            quantity: 1,
+            tagIds: const [],
+            acquiredAt: crafted.acquiredAt,
+            customName: interfaceLanguage.text(
+              '调合残渣',
+              'Synthesis residue',
+              '調合の残滓',
+            ),
+            customDescription: interfaceLanguage.text(
+              '调合失败后留下的残渣，不具备预期成品效果。',
+              'Residue from a failed synthesis; it has none of the intended effects.',
+              '調合失敗で残った残滓。予定した効果はありません。',
+            ),
+            customCategories: const [],
+          );
     _commitSynthesis(
       result: result,
-      recipeId: 'custom',
+      recipeId: success ? 'custom' : 'custom_failed',
       requiredCounts: requiredCounts,
     );
     return result;
@@ -3276,10 +3485,17 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
       );
       return jsonEncode({
         'ok': true,
+        'success': result.templateId != 'custom_failed_product',
+        'inventory_after': alchemyState.inventory
+            .where((item) => consumedCounts.containsKey(item.instanceId))
+            .map(_alchemyItemToolJson)
+            .toList(),
         'kind': 'llm_recipe',
         'result': _alchemyItemToolJson(result),
         'consumed': consumed,
-        'message': '调合已完成，结果和素材消耗已写入本地背包。',
+        'message': result.templateId == 'custom_failed_product'
+            ? '调合失败，投入素材已消耗，只获得残渣。不得宣称获得预期成品，也不要自动重试，等待用户决定。'
+            : '调合成功，结果和素材消耗已写入本地背包。',
       });
     } on Object catch (error) {
       return jsonEncode({
@@ -3533,6 +3749,11 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
     _changed();
   }
 
+  void setIndependentTranslation(bool value) {
+    independentTranslation = value;
+    _changed();
+  }
+
   void setPreferCustomUserProfile(bool value) {
     preferCustomUserProfile = value;
     _changed();
@@ -3660,6 +3881,11 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
       _preferences.setString('text_color_theme', textColorTheme?.name ?? ''),
       _preferences.setBool('translation_only', translationOnly),
       _preferences.setBool(
+        'background_voice_playback',
+        backgroundVoicePlayback,
+      ),
+      _preferences.setBool('independent_translation', independentTranslation),
+      _preferences.setBool(
         'prefer_custom_user_profile',
         preferCustomUserProfile,
       ),
@@ -3717,6 +3943,10 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
         npcInteractionFrequency.name,
       ),
       _preferences.setBool('fish_tts_enabled', fishTtsEnabled),
+      _preferences.setBool(
+        'independent_speech_performance',
+        independentSpeechPerformance,
+      ),
       _preferences.setString('tts_provider', ttsProvider.name),
       _preferences.setString('fish_audio_model', fishAudioModel),
       _preferences.setString('fish_audio_base_url', fishAudioBaseUrl),
@@ -3749,6 +3979,11 @@ ${asmrModeEnabled ? '当前已开启 ASMR 模式。' : '当前未开启 ASMR 模
       _preferences.setString('tts_preview_text', ttsPreviewText),
       _preferences.setBool('long_term_memory_enabled', longTermMemoryEnabled),
       _preferences.setString('memory_summary', memorySummary),
+      _preferences.setBool('split_narration_composer', splitNarrationComposer),
+      _preferences.setString(
+        'character_state_v1',
+        jsonEncode(characterState.toJson()),
+      ),
       _preferences.setStringList(
         'suggestion_use_times',
         suggestionUseTimes.map((value) => value.toIso8601String()).toList(),
