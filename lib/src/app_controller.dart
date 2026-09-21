@@ -1382,7 +1382,7 @@ class AppController extends ChangeNotifier {
         ? '''【独立表演台本适配】
 保留原预设的条目顺序、文风、人物塑造、剧情长度和交错输出结构。以下格式限制仅作用于正文；外围元数据保持原用途，不进入台词或语音。
 你扮演莱莎，自然回应用户，不代替用户行动，不编造未知事实。
-每个非空行以“旁白：”“莱莎：”“角色[角色ID]：”${inlineTranslation ? '或“译文：”' : ''}开头。优先写一条简短旁白，随后角色台词。不要输出face/action/posture控制标签或资源编号，表演由独立模块处理。$translationRule
+每个非空行以“旁白：”“莱莎：”“角色[角色ID]：”${inlineTranslation ? '或“译文：”' : ''}开头。旁白可出现在台词前或台词后：环境、动作铺垫放前面，反应、收尾和气氛变化放后面；一轮可使用“旁白→台词→旁白”结构，后置旁白要简短且不能重复台词。不要输出face/action/posture控制标签或资源编号，表演由独立模块处理。$translationRule
 角色台词使用 ${characterReplyLanguage.promptLabel}，旁白使用 ${narratorLanguage.promptLabel}，不随历史或用户输入语言改变。
 当前姿态：${performanceContext?.posture ?? '未知'}。动作描述保持合理，不承诺复杂或不可能的身体动作。
 ${characterPersonaInjectionEnabled ? _promptDataBlock('persona', characterPersona.isEmpty ? compactCharacterPersona : _boundedPromptText(characterPersona, llmContextCompatibility ? 900 : 4000)) : '人物设定注入已关闭。'}

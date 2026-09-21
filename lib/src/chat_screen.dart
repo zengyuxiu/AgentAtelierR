@@ -174,6 +174,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _secretStore = const SecretStore();
   final _inputController = TextEditingController();
   final _narrationInputController = TextEditingController();
+  final _narrationBottomInputController = TextEditingController();
   final _scrollController = ScrollController();
   final _latestAssistantMessageKey = GlobalKey();
   final _random = Random();
@@ -2045,6 +2046,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _inputController.dispose();
     _narrationInputController.dispose();
+    _narrationBottomInputController.dispose();
     _scrollController.removeListener(_handleConversationScroll);
     _scrollController.dispose();
     super.dispose();
@@ -2189,8 +2191,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendMessage({String? automaticPrompt}) async {
     final rawText = _inputController.text.trim();
     final narration = _narrationInputController.text.trim();
+    final narrationBottom = _narrationBottomInputController.text.trim();
     if ((rawText.isEmpty &&
             narration.isEmpty &&
+            narrationBottom.isEmpty &&
             _pendingAttachments.isEmpty &&
             automaticPrompt == null) ||
         _isReplying) {
@@ -2203,14 +2207,17 @@ class _ChatScreenState extends State<ChatScreen> {
         automaticPrompt ??
         [
           if (narration.isNotEmpty) '旁白：$narration',
-          if (rawText.isNotEmpty) '发言：$rawText',
-          if (narration.isEmpty && rawText.isEmpty) '请分析我发送的附件。',
+          if (rawText.isNotEmpty || narrationBottom.isNotEmpty) '发言：$rawText',
+          if (narrationBottom.isNotEmpty) '旁白：$narrationBottom',
+          if (narration.isEmpty && rawText.isEmpty && narrationBottom.isEmpty)
+            '请分析我发送的附件。',
         ].join('\n');
     final isAutomatic = automaticPrompt != null;
 
     _cancelSpeechPlayback();
     if (!isAutomatic) _inputController.clear();
     if (!isAutomatic) _narrationInputController.clear();
+    if (!isAutomatic) _narrationBottomInputController.clear();
     if (!isAutomatic) {
       widget.controller.addUserMessage(text, attachments: attachments);
     }
@@ -2605,7 +2612,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _narrationInputController
       ..text = restored.narration
       ..selection = TextSelection.collapsed(offset: restored.narration.length);
-    if (restored.narration.isNotEmpty) {
+    _narrationBottomInputController
+      ..text = restored.bottomNarration
+      ..selection = TextSelection.collapsed(
+        offset: restored.bottomNarration.length,
+      );
+    if (restored.narration.isNotEmpty || restored.bottomNarration.isNotEmpty) {
       widget.controller.setSplitNarrationComposer(true);
     }
     setState(() {
@@ -3890,6 +3902,7 @@ class _ChatScreenState extends State<ChatScreen> {
               scrollController: _scrollController,
               inputController: _inputController,
               narrationController: _narrationInputController,
+              bottomNarrationController: _narrationBottomInputController,
               splitNarration: widget.controller.splitNarrationComposer,
               onToggleNarration: () {
                 widget.controller.setSplitNarrationComposer(
@@ -5557,6 +5570,7 @@ class _LiquidGlassConversation extends StatelessWidget {
     required this.scrollController,
     required this.inputController,
     required this.narrationController,
+    required this.bottomNarrationController,
     required this.splitNarration,
     required this.onToggleNarration,
     required this.showMicrophone,
@@ -5600,6 +5614,7 @@ class _LiquidGlassConversation extends StatelessWidget {
   final ScrollController scrollController;
   final TextEditingController inputController;
   final TextEditingController narrationController;
+  final TextEditingController bottomNarrationController;
   final bool splitNarration;
   final VoidCallback onToggleNarration;
   final bool showMicrophone;
@@ -5680,6 +5695,7 @@ class _LiquidGlassConversation extends StatelessWidget {
                   language: language,
                   controller: inputController,
                   narrationController: narrationController,
+                  bottomNarrationController: bottomNarrationController,
                   splitNarration: splitNarration,
                   onToggleNarration: onToggleNarration,
                   isReplying: isReplying,
@@ -5957,6 +5973,18 @@ class _GlassMessageList extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [body, const SizedBox(width: 10), avatar],
                 ),
+              if (userParts.bottomNarration.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _NarratorRun(
+                  segments: [
+                    ChatSegment(
+                      speaker: ChatSpeaker.narrator,
+                      text: userParts.bottomNarration,
+                    ),
+                  ],
+                  glass: true,
+                ),
+              ],
             ],
           ),
         );
@@ -6724,6 +6752,7 @@ class _GlassComposer extends StatelessWidget {
     required this.language,
     required this.controller,
     required this.narrationController,
+    required this.bottomNarrationController,
     required this.splitNarration,
     required this.onToggleNarration,
     required this.isReplying,
@@ -6743,6 +6772,7 @@ class _GlassComposer extends StatelessWidget {
   final AppLanguage language;
   final TextEditingController controller;
   final TextEditingController narrationController;
+  final TextEditingController bottomNarrationController;
   final bool splitNarration;
   final VoidCallback onToggleNarration;
   final bool isReplying;
@@ -6862,6 +6892,32 @@ class _GlassComposer extends StatelessWidget {
                                 ),
                                 hintStyle: const TextStyle(
                                   color: Colors.white60,
+                                  fontSize: 12,
+                                ),
+                                border: InputBorder.none,
+                              ),
+                            ),
+                            Divider(
+                              height: 1,
+                              color: Colors.white.withValues(alpha: .25),
+                            ),
+                            TextField(
+                              controller: bottomNarrationController,
+                              minLines: 1,
+                              maxLines: 2,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                              ),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: language.text(
+                                  '下方旁白（反应、收尾、气氛）',
+                                  'Bottom narration (reaction, ending, mood)',
+                                  '下部ナレーション（反応・余韻・雰囲気）',
+                                ),
+                                hintStyle: const TextStyle(
+                                  color: Colors.white54,
                                   fontSize: 12,
                                 ),
                                 border: InputBorder.none,
@@ -7341,6 +7397,18 @@ class _MessageList extends StatelessWidget {
                       ),
                     ),
                   ),
+                if (parts.bottomNarration.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _NarratorRun(
+                    segments: [
+                      ChatSegment(
+                        speaker: ChatSpeaker.narrator,
+                        text: parts.bottomNarration,
+                      ),
+                    ],
+                    glass: glass,
+                  ),
+                ],
               ],
             ),
           );
